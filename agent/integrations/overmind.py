@@ -2,7 +2,7 @@
 
 This is NOT overmind.tech (infra blast radius). Prism uses the Overmind Lab
 Python SDK to trace every scan run: entry point → workflow → tool spans, plus
-automatic LLM provider instrumentation when OPENAI_API_KEY is set.
+automatic LLM provider instrumentation when Anthropic/OpenAI keys are set.
 
 Docs: https://docs.overmindlab.ai/core/observability
 Console: https://console.overmindlab.ai

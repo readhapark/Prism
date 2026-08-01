@@ -47,14 +47,25 @@ async def health():
         "read_only": settings.read_only,
         "allowlist": settings.allowlist_patterns,
         "llm": settings.has_llm,
+        "llm_backend": settings.llm_backend,
+        "llm_model": (
+            settings.anthropic_model
+            if settings.llm_backend == "anthropic"
+            else settings.openai_model
+            if settings.llm_backend == "openai"
+            else None
+        ),
         "supabase": settings.has_supabase,
         "ossprey": settings.has_ossprey,
         "overmind": settings.has_overmind,
+        "overmind_status": overmind_status(),
+        "overmind_boot": _overmind_boot,
         "sandbox_url": settings.sandbox_url,
         "integrations": {
             "ossprey": "supply-chain malware verdicts on discovered manifests",
-            "overmind": "blast-radius enrichment for cloud misconfig findings",
-            "overmind_mcp": "https://api.overmind.tech/api/mcp",
+            "overmind": "Overmind Lab agent observability / evals (overmindlab.ai)",
+            "overmind_docs": "https://docs.overmindlab.ai",
+            "overmind_console": "https://console.overmindlab.ai",
         },
     }
 

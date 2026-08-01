@@ -25,8 +25,12 @@ class Settings(BaseSettings):
         "localhost,127.0.0.1,juice-shop.local,"
         "*.modal.run,*.modal.host,*.trycloudflare.com"
     )
+    # LLM planner — Claude preferred; OpenAI optional fallback
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    llm_provider: str = "auto"  # auto | anthropic | openai | none
     supabase_url: str = ""
     supabase_service_key: str = ""
     # Ossprey — supply-chain malware

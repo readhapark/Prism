@@ -250,7 +250,16 @@ export default function Console() {
           <Badge ok={!!health?.ossprey} label="Ossprey" />
           <Badge ok={!!health?.overmind} label="Overmind" />
           <Badge ok={!!health?.supabase} label="Supabase" />
-          <Badge ok={!!health?.llm} label="LLM" />
+          <Badge
+            ok={!!health?.llm}
+            label={
+              health?.llm_backend === "anthropic"
+                ? "Claude"
+                : health?.llm_backend === "openai"
+                  ? "OpenAI"
+                  : "LLM"
+            }
+          />
         </div>
       </header>
 

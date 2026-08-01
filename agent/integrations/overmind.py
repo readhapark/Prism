@@ -35,7 +35,9 @@ def init_overmind() -> dict[str, Any]:
         from overmind import init, set_agent_name
 
         providers: list[str] = []
-        if settings.has_llm:
+        if settings.has_anthropic:
+            providers.append("anthropic")
+        if settings.has_openai:
             providers.append("openai")
 
         init(

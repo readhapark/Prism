@@ -44,42 +44,88 @@ async def _llm_plan(
     max_steps: int,
 ) -> PlannedAction | None:
     settings = get_settings()
+    user = {
+        "target": recon.target,
+        "technologies": recon.technologies,
+        "open_ports": recon.open_ports,
+        "interesting_paths": recon.interesting_paths[:30],
+        "apis": recon.apis,
+        "done_actions": done_actions,
+        "findings_count": findings_count,
+        "step": step,
+        "max_steps": max_steps,
+        "notes": recon.notes[-8:],
+    }
+    backend = settings.llm_backend
     try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        user = {
-            "target": recon.target,
-            "technologies": recon.technologies,
-            "open_ports": recon.open_ports,
-            "interesting_paths": recon.interesting_paths[:30],
-            "apis": recon.apis,
-            "done_actions": done_actions,
-            "findings_count": findings_count,
-            "step": step,
-            "max_steps": max_steps,
-            "notes": recon.notes[-8:],
-        }
-        resp = await client.chat.completions.create(
-            model=settings.openai_model,
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(user)},
-            ],
-            response_format={"type": "json_object"},
-        )
-        content = resp.choices[0].message.content or "{}"
+        if backend == "anthropic":
+            content = await _claude_plan(user)
+        elif backend == "openai":
+            content = await _openai_plan(user)
+        else:
+            return None
         data = json.loads(content)
         action = ActionType(data["action"])
         return PlannedAction(
             action=action,
-            rationale=data.get("rationale", "LLM selected next step"),
+            rationale=data.get("rationale", f"{backend} selected next step"),
             params=data.get("params") or {},
             risk=data.get("risk", "passive"),
         )
     except Exception:
         return None
+
+
+async def _claude_plan(user: dict[str, Any]) -> str:
+    from anthropic import AsyncAnthropic
+
+    settings = get_settings()
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    resp = await client.messages.create(
+        model=settings.anthropic_model,
+        max_tokens=512,
+        temperature=0.2,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Given this recon state, pick the next action as JSON only.\n"
+                    + json.dumps(user)
+                ),
+            }
+        ],
+    )
+    text = ""
+    for block in resp.content:
+        if getattr(block, "type", None) == "text":
+            text += block.text
+    # Claude sometimes wraps JSON in fences
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    parsed = extract_json_object(text)
+    if parsed is None:
+        raise ValueError(f"Claude returned non-JSON: {text[:200]}")
+    return json.dumps(parsed)
+
+
+async def _openai_plan(user: dict[str, Any]) -> str:
+    from openai import AsyncOpenAI
+
+    settings = get_settings()
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    resp = await client.chat.completions.create(
+        model=settings.openai_model,
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(user)},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return resp.choices[0].message.content or "{}"
 
 
 def _rule_plan(

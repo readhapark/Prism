@@ -25,17 +25,24 @@ class Settings(BaseSettings):
         "localhost,127.0.0.1,juice-shop.local,"
         "*.modal.run,*.modal.host,*.trycloudflare.com"
     )
+    # LLM planner — Claude preferred; OpenAI optional fallback
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    llm_provider: str = "auto"  # auto | anthropic | openai | none
     supabase_url: str = ""
     supabase_service_key: str = ""
     # Ossprey — supply-chain malware
     ossprey_api_key: str = ""
     ossprey_api_url: str = "https://api.ossprey.com"
-    # Overmind — infra blast radius (also accepts OVM_API_KEY)
+    # Overmind Lab (overmindlab.ai) — agent observability / evals
+    # API key from https://console.overmindlab.ai (ovr_…)
     overmind_api_key: str = ""
-    ovm_api_key: str = ""
-    overmind_api_url: str = "https://api.overmind.tech"
+    overmind_api_url: str = "https://api.overmindlab.ai"
+    overmind_service_name: str = "prism"
+    overmind_agent_name: str = "Prism Attack Surface Mapper"
+    overmind_environment: str = "hackathon"
     agent_host: str = "0.0.0.0"
     agent_port: int = 8787
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -54,7 +61,31 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
+    def llm_backend(self) -> str | None:
+        pref = (self.llm_provider or "auto").lower()
+        if pref == "none":
+            return None
+        if pref == "anthropic" and self.anthropic_api_key:
+            return "anthropic"
+        if pref == "openai" and self.openai_api_key:
+            return "openai"
+        if pref == "auto":
+            if self.anthropic_api_key:
+                return "anthropic"
+            if self.openai_api_key:
+                return "openai"
+        return None
+
+    @property
     def has_llm(self) -> bool:
+        return self.llm_backend is not None
+
+    @property
+    def has_anthropic(self) -> bool:
+        return bool(self.anthropic_api_key)
+
+    @property
+    def has_openai(self) -> bool:
         return bool(self.openai_api_key)
 
     @property
@@ -67,11 +98,11 @@ class Settings(BaseSettings):
 
     @property
     def overmind_api_key_resolved(self) -> str:
-        return self.overmind_api_key or self.ovm_api_key
+        return self.overmind_api_key
 
     @property
     def has_overmind(self) -> bool:
-        return bool(self.overmind_api_key_resolved)
+        return bool(self.overmind_api_key)
 
 
 @lru_cache

@@ -39,6 +39,8 @@ export type Health = {
   ok: boolean;
   allowlist: string[];
   llm: boolean;
+  llm_backend?: string | null;
+  llm_model?: string | null;
   supabase: boolean;
   ossprey: boolean;
   overmind: boolean;

@@ -4,7 +4,7 @@
 
 Point Prism at a scoped target (a domain you own, or a deliberately-vulnerable sandbox like OWASP Juice Shop on Modal). It autonomously chains:
 
-**recon → enumeration → known-misconfig checks → Ossprey supply-chain scan → Overmind blast-radius context → prioritized findings report**
+**recon → enumeration → known-misconfig checks → Ossprey supply-chain scan → Overmind Lab traces → prioritized findings report**
 
 …like a junior pentester’s first pass — with hard guardrails so humans stay in the loop.
 
@@ -14,7 +14,7 @@ Point Prism at a scoped target (a domain you own, or a deliberately-vulnerable s
 
 | Criterion | How Prism hits it |
 |---|---|
-| **AI autonomy** | Agent picks the next check from what it just found (Juice Shop → API enum; `package.json` → Ossprey; S3 hints → Overmind). Not a fixed script. |
+| **AI autonomy** | Agent picks the next check from what it just found (Juice Shop → API enum; `package.json` → Ossprey). Not a fixed script. |
 | **Security impact** | Same workflow junior pentesters / bug-bounty triage do manually. |
 | **Safety / responsible design** | Hardcoded allowlist, read-only checks, no auto-exploitation, human gates for deeper probes, full audit log (local JSONL + optional Supabase). |
 
@@ -28,7 +28,7 @@ dashboard (Next.js)  --SSE-->  api (FastAPI)  -->  agent loop
                                                     ├─ recon (dns, ports, tech, paths)
                                                     ├─ misconfig hunter
                                                     ├─ Ossprey (supply-chain malware)
-                                                    ├─ Overmind (blast radius)
+                                                    ├─ Overmind Lab (traces / evals)
                                                     └─ report writer
 sandbox: Modal Sandbox (tunneled)  |  demo/sandbox_app.py  |  docker Juice Shop
 ```
@@ -73,7 +73,7 @@ modal deploy prism_modal/juice_shop.py
 ```bash
 # 1) Python deps
 python3 -m pip install -r requirements.txt
-cp .env.example .env   # add OSSPREY_API_KEY, optional OVM_API_KEY / OPENAI / Supabase
+cp .env.example .env   # add OSSPREY_API_KEY, OVERMIND_API_KEY (ovr_…), ANTHROPIC_API_KEY / Supabase
 
 # 2) Lab sandbox (Juice Shop–style misconfigs on :3001)
 python3 demo/sandbox_app.py &
@@ -124,19 +124,17 @@ curl -fsSL https://github.com/ossprey/ossprey-cli/releases/latest/download/insta
   | OSSPREY_INSTALL_DIR=$HOME/.local/bin sh
 ```
 
-### Overmind (blast radius)
+### Overmind Lab (agent observability)
 
-Cloud / infra-related findings are enriched with Overmind source + recent change context.
+[Overmind Lab](https://docs.overmindlab.ai) traces every Prism scan (entry point → tools → LLM calls) so you can build datasets, evals, and optimisation PRs.
 
 ```bash
-export OVM_API_KEY=...   # or OVERMIND_API_KEY
+# Key from https://console.overmindlab.ai
+export OVERMIND_API_KEY=ovr_...
+pip install overmind
 ```
 
-Cursor MCP (already in `.cursor/mcp.json`):
-
-```json
-{ "mcpServers": { "overmind": { "url": "https://api.overmind.tech/api/mcp" } } }
-```
+Traces appear under agent **Prism Attack Surface Mapper** in the Overmind console.
 
 ### Supabase audit log
 

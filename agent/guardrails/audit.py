@@ -50,7 +50,24 @@ class AuditLogger:
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, default=str) + "\n")
         if self.settings.has_supabase:
-            await self._supabase_insert("findings", row)
+            # Only columns present in supabase/schema.sql
+            allowed = {
+                "run_id",
+                "title",
+                "severity",
+                "category",
+                "evidence",
+                "remediation",
+                "asset",
+                "cwe",
+                "confidence",
+                "logged_at",
+            }
+            sb_row = {k: v for k, v in row.items() if k in allowed}
+            # severity may be enum — stringify
+            if hasattr(sb_row.get("severity"), "value"):
+                sb_row["severity"] = sb_row["severity"].value
+            await self._supabase_insert("findings", sb_row)
 
     async def log_run_meta(self, run_id: str, meta: dict[str, Any]) -> None:
         row = {"run_id": run_id, **meta, "logged_at": datetime.now(timezone.utc).isoformat()}
@@ -58,7 +75,21 @@ class AuditLogger:
             path = AUDIT_DIR / f"{run_id}.meta.json"
             path.write_text(json.dumps(row, indent=2, default=str), encoding="utf-8")
         if self.settings.has_supabase:
-            await self._supabase_insert("scan_runs", row)
+            allowed = {
+                "run_id",
+                "target",
+                "status",
+                "mode",
+                "steps",
+                "findings",
+                "report_path",
+                "base_url",
+                "reason",
+                "logged_at",
+            }
+            sb_row = {k: v for k, v in row.items() if k in allowed}
+            # Upsert by run_id so progressive meta updates don't fail uniqueness
+            await self._supabase_upsert("scan_runs", sb_row, on_conflict="run_id")
 
     def read_events(self, run_id: str) -> list[dict[str, Any]]:
         path = self._local_path(run_id)
@@ -78,19 +109,35 @@ class AuditLogger:
             # supabase-py is sync; offload
             await asyncio.to_thread(lambda: client.table(table).insert(row).execute())
         except Exception as exc:  # noqa: BLE001 — audit must never crash the agent
-            async with self._lock:
-                fail = AUDIT_DIR / "supabase_errors.jsonl"
-                with fail.open("a", encoding="utf-8") as f:
-                    f.write(
-                        json.dumps(
-                            {
-                                "table": table,
-                                "error": str(exc),
-                                "at": datetime.now(timezone.utc).isoformat(),
-                            }
-                        )
-                        + "\n"
+            await self._log_supabase_error(table, exc)
+
+    async def _supabase_upsert(
+        self, table: str, row: dict[str, Any], on_conflict: str
+    ) -> None:
+        try:
+            client = self._get_supabase()
+            if client is None:
+                return
+            await asyncio.to_thread(
+                lambda: client.table(table).upsert(row, on_conflict=on_conflict).execute()
+            )
+        except Exception as exc:  # noqa: BLE001
+            await self._log_supabase_error(table, exc)
+
+    async def _log_supabase_error(self, table: str, exc: Exception) -> None:
+        async with self._lock:
+            fail = AUDIT_DIR / "supabase_errors.jsonl"
+            with fail.open("a", encoding="utf-8") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "table": table,
+                            "error": str(exc),
+                            "at": datetime.now(timezone.utc).isoformat(),
+                        }
                     )
+                    + "\n"
+                )
 
     def _get_supabase(self):
         if self._supabase is not None:

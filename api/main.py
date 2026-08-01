@@ -17,10 +17,12 @@ if str(ROOT) not in sys.path:
 from agent.config import REPORTS_DIR, ensure_data_dirs, get_settings  # noqa: E402
 from agent.core.events import bus  # noqa: E402
 from agent.core.loop import runner  # noqa: E402
+from agent.integrations.overmind import init_overmind, status as overmind_status  # noqa: E402
 from agent.models import HumanDecisionRequest, StartScanRequest  # noqa: E402
 
 ensure_data_dirs()
 settings = get_settings()
+_overmind_boot = init_overmind()
 
 app = FastAPI(
     title="Prism Agent API",
@@ -45,14 +47,25 @@ async def health():
         "read_only": settings.read_only,
         "allowlist": settings.allowlist_patterns,
         "llm": settings.has_llm,
+        "llm_backend": settings.llm_backend,
+        "llm_model": (
+            settings.anthropic_model
+            if settings.llm_backend == "anthropic"
+            else settings.openai_model
+            if settings.llm_backend == "openai"
+            else None
+        ),
         "supabase": settings.has_supabase,
         "ossprey": settings.has_ossprey,
         "overmind": settings.has_overmind,
+        "overmind_status": overmind_status(),
+        "overmind_boot": _overmind_boot,
         "sandbox_url": settings.sandbox_url,
         "integrations": {
             "ossprey": "supply-chain malware verdicts on discovered manifests",
-            "overmind": "blast-radius enrichment for cloud misconfig findings",
-            "overmind_mcp": "https://api.overmind.tech/api/mcp",
+            "overmind": "Overmind Lab agent observability / evals (overmindlab.ai)",
+            "overmind_docs": "https://docs.overmindlab.ai",
+            "overmind_console": "https://console.overmindlab.ai",
         },
     }
 

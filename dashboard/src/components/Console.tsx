@@ -242,7 +242,7 @@ export default function Console() {
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-mute md:text-base">
             Agentic attack surface mapper + autonomous misconfig hunter. Recon chains into
-            Ossprey supply-chain checks and Overmind blast-radius context — humans stay in the loop.
+            Ossprey supply-chain checks; Overmind Lab traces every run for evals — humans stay in the loop.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-wider">
@@ -250,7 +250,16 @@ export default function Console() {
           <Badge ok={!!health?.ossprey} label="Ossprey" />
           <Badge ok={!!health?.overmind} label="Overmind" />
           <Badge ok={!!health?.supabase} label="Supabase" />
-          <Badge ok={!!health?.llm} label="LLM" />
+          <Badge
+            ok={!!health?.llm}
+            label={
+              health?.llm_backend === "anthropic"
+                ? "Claude"
+                : health?.llm_backend === "openai"
+                  ? "OpenAI"
+                  : "LLM"
+            }
+          />
         </div>
       </header>
 

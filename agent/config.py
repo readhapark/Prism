@@ -61,7 +61,31 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
+    def llm_backend(self) -> str | None:
+        pref = (self.llm_provider or "auto").lower()
+        if pref == "none":
+            return None
+        if pref == "anthropic" and self.anthropic_api_key:
+            return "anthropic"
+        if pref == "openai" and self.openai_api_key:
+            return "openai"
+        if pref == "auto":
+            if self.anthropic_api_key:
+                return "anthropic"
+            if self.openai_api_key:
+                return "openai"
+        return None
+
+    @property
     def has_llm(self) -> bool:
+        return self.llm_backend is not None
+
+    @property
+    def has_anthropic(self) -> bool:
+        return bool(self.anthropic_api_key)
+
+    @property
+    def has_openai(self) -> bool:
         return bool(self.openai_api_key)
 
     @property

@@ -32,10 +32,13 @@ class Settings(BaseSettings):
     # Ossprey — supply-chain malware
     ossprey_api_key: str = ""
     ossprey_api_url: str = "https://api.ossprey.com"
-    # Overmind — infra blast radius (also accepts OVM_API_KEY)
+    # Overmind Lab (overmindlab.ai) — agent observability / evals
+    # API key from https://console.overmindlab.ai (ovr_…)
     overmind_api_key: str = ""
-    ovm_api_key: str = ""
-    overmind_api_url: str = "https://api.overmind.tech"
+    overmind_api_url: str = "https://api.overmindlab.ai"
+    overmind_service_name: str = "prism"
+    overmind_agent_name: str = "Prism Attack Surface Mapper"
+    overmind_environment: str = "hackathon"
     agent_host: str = "0.0.0.0"
     agent_port: int = 8787
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -67,11 +70,11 @@ class Settings(BaseSettings):
 
     @property
     def overmind_api_key_resolved(self) -> str:
-        return self.overmind_api_key or self.ovm_api_key
+        return self.overmind_api_key
 
     @property
     def has_overmind(self) -> bool:
-        return bool(self.overmind_api_key_resolved)
+        return bool(self.overmind_api_key)
 
 
 @lru_cache

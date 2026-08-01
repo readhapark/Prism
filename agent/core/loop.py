@@ -12,7 +12,7 @@ from agent.core.events import bus
 from agent.guardrails.audit import AuditLogger
 from agent.guardrails.policy import GuardrailEngine
 from agent.integrations.ossprey import results_to_findings, scan_manifest_content
-from agent.integrations.overmind import enrich_with_blast_radius
+from agent.integrations.overmind import annotate_run, flush as overmind_flush
 from agent.llm.planner import plan_next_action
 from agent.models import (
     ActionType,
@@ -92,6 +92,7 @@ class AgentRunner:
             EventKind.NARRATIVE,
             "Guardrails online — allowlist verified, read-only mode engaged, audit log streaming.",
         )
+        annotate_run(run.id, target=target, mode=run.mode)
         asyncio.create_task(self._run_loop(run.id))
         return run
 
@@ -115,6 +116,28 @@ class AgentRunner:
         run = self.runs[run_id]
         assert run.recon is not None
         done_actions: list[str] = []
+
+        try:
+            from overmind import entry_point, set_tag, tool, workflow
+
+            @entry_point("prism_scan")
+            @workflow("attack_surface_pass")
+            def _traced_scan_marker() -> str:
+                set_tag("prism.run_id", run_id)
+                set_tag("prism.target", run.target)
+                return run_id
+
+            try:
+                _traced_scan_marker()
+            except Exception:
+                pass
+
+            @tool("prism_action")
+            def _tool_marker(action_name: str) -> str:
+                set_tag("prism.action", action_name)
+                return action_name
+        except Exception:
+            _tool_marker = None  # type: ignore[assignment]
 
         try:
             while run.steps < self.settings.max_agent_steps:
@@ -217,8 +240,19 @@ class AgentRunner:
                 )
 
                 try:
+                    if _tool_marker is not None:
+                        try:
+                            _tool_marker(planned.action.value)
+                        except Exception:
+                            pass
                     result = await self._execute(run, planned)
                 except Exception as exc:  # noqa: BLE001
+                    try:
+                        from overmind import capture_exception
+
+                        capture_exception(exc)
+                    except Exception:
+                        pass
                     await self._emit(
                         run,
                         EventKind.ERROR,
@@ -248,6 +282,12 @@ class AgentRunner:
 
         except Exception as exc:  # noqa: BLE001
             run.status = "failed"
+            try:
+                from overmind import capture_exception
+
+                capture_exception(exc)
+            except Exception:
+                pass
             await self._emit(run, EventKind.ERROR, f"Agent loop crashed: {exc}")
         finally:
             await self.audit.log_run_meta(
@@ -260,6 +300,7 @@ class AgentRunner:
                     "report_path": run.report_path,
                 },
             )
+            overmind_flush()
             await bus.close(run.id)
 
     async def _execute(self, run: ScanRun, planned: PlannedAction) -> dict[str, Any]:
@@ -462,18 +503,37 @@ class AgentRunner:
             return result
 
         if action == ActionType.OVERMIND_BLAST:
-            hints = recon.technologies + recon.interesting_paths + recon.notes
-            result = await enrich_with_blast_radius(run.findings, cloud_hints=hints)
-            recon.raw["overmind"] = {
-                "sources": len(result.get("sources") or []),
-                "changes": len(result.get("changes") or []),
-                "skipped": result.get("skipped"),
-                "narrative": result.get("narrative"),
-            }
-            await self._add_findings(run, result.get("enrichment_findings") or [])
-            if result.get("narrative"):
-                recon.notes.append(result["narrative"])
-            return result
+            # Observability is initialized at API startup; this step just confirms
+            # Overmind Lab tracing is attached to the run.
+            from agent.integrations.overmind import status as om_status
+
+            st = om_status()
+            recon.raw["overmind"] = st
+            msg = (
+                f"Overmind Lab tracing {'active' if st.get('initialized') else 'not configured'} "
+                f"(agent={st.get('agent_name')}). Traces → console.overmindlab.ai"
+            )
+            recon.notes.append(msg)
+            if st.get("initialized"):
+                await self._add_findings(
+                    run,
+                    [
+                        Finding(
+                            title="Overmind Lab: scan run traced for eval / optimisation",
+                            severity=Severity.INFO,
+                            category="observability",
+                            asset="overmindlab.ai",
+                            evidence=msg,
+                            remediation=(
+                                "Review traces in https://console.overmindlab.ai — "
+                                "promote interesting runs into datasets and evals."
+                            ),
+                            references=["https://docs.overmindlab.ai/core/observability"],
+                            confidence=0.95,
+                        )
+                    ],
+                )
+            return st
 
         return {"skipped": True}
 
@@ -602,12 +662,15 @@ class AgentRunner:
                 return f"Ossprey flagged {len(malware)} malicious package(s). Elevating to CRITICAL."
             return f"Ossprey cleared {len(comps)} component(s) — no malware verdict."
         if act == ActionType.OVERMIND_BLAST:
-            if result.get("skipped"):
+            if result.get("initialized"):
                 return (
-                    "Overmind enrichment skipped (no OVM_API_KEY). "
-                    "Connect Overmind MCP or set the key for blast-radius context."
+                    "Overmind Lab is tracing this engagement — every tool call lands in "
+                    "console.overmindlab.ai for evals and optimisation."
                 )
-            return result.get("narrative") or "Overmind blast-radius context attached to cloud findings."
+            return (
+                "Overmind Lab not configured — set OVERMIND_API_KEY=ovr_… "
+                "from https://console.overmindlab.ai"
+            )
         return planned.rationale
 
 

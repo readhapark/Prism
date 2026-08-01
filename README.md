@@ -4,7 +4,7 @@
 
 Point Prism at a scoped target (a domain you own, or a deliberately-vulnerable sandbox like OWASP Juice Shop on Modal). It autonomously chains:
 
-**recon → enumeration → known-misconfig checks → Ossprey supply-chain scan → Overmind blast-radius context → prioritized findings report**
+**recon → enumeration → known-misconfig checks → Ossprey supply-chain scan → Overmind Lab traces → prioritized findings report**
 
 …like a junior pentester’s first pass — with hard guardrails so humans stay in the loop.
 

@@ -17,10 +17,12 @@ if str(ROOT) not in sys.path:
 from agent.config import REPORTS_DIR, ensure_data_dirs, get_settings  # noqa: E402
 from agent.core.events import bus  # noqa: E402
 from agent.core.loop import runner  # noqa: E402
+from agent.integrations.overmind import init_overmind, status as overmind_status  # noqa: E402
 from agent.models import HumanDecisionRequest, StartScanRequest  # noqa: E402
 
 ensure_data_dirs()
 settings = get_settings()
+_overmind_boot = init_overmind()
 
 app = FastAPI(
     title="Prism Agent API",

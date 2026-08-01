@@ -17,7 +17,7 @@ Valid actions: dns_enum, port_fingerprint, tech_detect, header_audit, path_probe
 cors_check, api_enum, cms_checks, s3_hint_check, git_exposure, robots_sitemap, cookie_audit,
 ossprey_scan, overmind_blast, generate_report, stop.
 When package.json / npm / pypi deps are visible, prefer ossprey_scan.
-When cloud storage / AWS / S3 hints appear, prefer overmind_blast for blast-radius context.
+Call overmind_blast once per run to confirm Overmind Lab observability is attached.
 """
 
 
@@ -166,18 +166,13 @@ def _rule_plan(
             ),
         )
 
-    # Cloud / infra findings → Overmind blast radius
-    if unused(ActionType.OVERMIND_BLAST) and (
-        "amazon s3" in tech
-        or "s3" in paths
-        or "amazonaws" in paths
-        or findings_count > 0
-    ):
+    # Confirm Overmind Lab tracing is attached once we have signal
+    if unused(ActionType.OVERMIND_BLAST) and findings_count > 0:
         return PlannedAction(
             action=ActionType.OVERMIND_BLAST,
             rationale=(
-                "Enriching cloud/misconfig findings with Overmind blast-radius context "
-                "so remediation accounts for dependent infra."
+                "Attaching / verifying Overmind Lab observability so this run is "
+                "available for datasets, evals, and optimisation."
             ),
         )
 

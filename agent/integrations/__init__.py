@@ -1,9 +1,11 @@
 from .ossprey import scan_dependencies, check_packages
-from .overmind import enrich_with_blast_radius, list_infra_context
+from .overmind import init_overmind, annotate_run, flush, status as overmind_status
 
 __all__ = [
     "scan_dependencies",
     "check_packages",
-    "enrich_with_blast_radius",
-    "list_infra_context",
+    "init_overmind",
+    "annotate_run",
+    "flush",
+    "overmind_status",
 ]

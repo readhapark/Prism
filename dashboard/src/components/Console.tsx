@@ -58,7 +58,7 @@ function statusLabel(status: string) {
 }
 
 export default function Console() {
-  const [target, setTarget] = useState("http://127.0.0.1:3001");
+  const [target, setTarget] = useState("");
   const [health, setHealth] = useState<Health | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("idle");
@@ -74,7 +74,13 @@ export default function Console() {
 
   useEffect(() => {
     getHealth()
-      .then(setHealth)
+      .then((h) => {
+        setHealth(h);
+        // Prefer Modal sandbox URL from API config over localhost defaults.
+        if (h.sandbox_url && !/127\.0\.0\.1|localhost/i.test(h.sandbox_url)) {
+          setTarget((prev) => prev || h.sandbox_url);
+        }
+      })
       .catch(() =>
         setHealth({
           ok: false,
@@ -86,11 +92,23 @@ export default function Console() {
           sandbox_url: "",
         })
       );
+
+    // Ensure Modal sandbox is running and point the form at its tunnel.
+    setSandboxBusy(true);
     getSandbox()
-      .then((s) => {
-        if (s.tunnel_url) setTarget(s.tunnel_url);
+      .then(async (s) => {
+        if (s.tunnel_url) {
+          setTarget(s.tunnel_url);
+          return;
+        }
+        const started = await startSandbox(false);
+        if (started.tunnel_url) setTarget(started.tunnel_url);
+        else if (started.error) setError(started.error);
       })
-      .catch(() => undefined);
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Modal sandbox unavailable");
+      })
+      .finally(() => setSandboxBusy(false));
   }, []);
 
   useEffect(() => {

@@ -1,0 +1,23 @@
+.audit/
+build/
+coverage/
+dashboard/.env.local
+dashboard/.next/
+dashboard/node_modules/
+dashboard/out/
+data/
+dist/
+.DS_Store
+*.egg-info/
+.env
+.env.local
+*.log
+.modal/
+.next/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# runtime
+.venv/
+venv/

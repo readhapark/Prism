@@ -1,0 +1,7 @@
+# Optional: real OWASP Juice Shop for demos (when Docker is available)
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:v17.1.1
+    ports:
+      - "3001:3000"
+    restart: unless-stopped

@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #070b14;
+  --ink-2: #0e1626;
+  --panel: rgba(14, 24, 42, 0.72);
+  --line: rgba(120, 170, 200, 0.16);
+  --teal: #2ee6a6;
+  --teal-dim: rgba(46, 230, 166, 0.14);
+  --amber: #f0a202;
+  --rose: #ff5d7a;
+  --sky: #7ec8ff;
+  --mist: #c5d4e8;
+  --mute: #7f92ad;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--mist);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(46, 230, 166, 0.12), transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, rgba(126, 200, 255, 0.1), transparent 50%),
+    linear-gradient(180deg, #0a1220 0%, var(--ink) 45%, #05080f 100%);
+  font-family: var(--font-body), "IBM Plex Mono", ui-monospace, monospace;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(126, 200, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(126, 200, 255, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  z-index: 0;
+}
+
+::selection {
+  background: rgba(46, 230, 166, 0.35);
+  color: #fff;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
+}
+
+@keyframes ticker {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 120px 0;
+  }
+}
+
+.animate-rise {
+  animation: rise-in 0.45s ease-out both;
+}
+
+.live-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+.scan-sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.scan-sheen::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 28%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(46, 230, 166, 0.05),
+    transparent
+  );
+  animation: scanline 7s linear infinite;
+  pointer-events: none;
+}
+
+.severity-critical {
+  color: var(--rose);
+  border-color: rgba(255, 93, 122, 0.45);
+  background: rgba(255, 93, 122, 0.08);
+}
+.severity-high {
+  color: #ff8b6a;
+  border-color: rgba(255, 139, 106, 0.4);
+  background: rgba(255, 139, 106, 0.08);
+}
+.severity-medium {
+  color: var(--amber);
+  border-color: rgba(240, 162, 2, 0.4);
+  background: rgba(240, 162, 2, 0.08);
+}
+.severity-low {
+  color: var(--sky);
+  border-color: rgba(126, 200, 255, 0.35);
+  background: rgba(126, 200, 255, 0.08);
+}
+.severity-info {
+  color: var(--mute);
+  border-color: rgba(127, 146, 173, 0.35);
+  background: rgba(127, 146, 173, 0.08);
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgba(126, 200, 255, 0.25);
+  border-radius: 999px;
+}

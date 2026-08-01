@@ -1,5 +1,5 @@
 -- Prism audit schema for Supabase (Postgres)
--- Run in the SQL editor; then set SUPABASE_URL + SUPABASE_SERVICE_KEY.
+-- Paste into: https://supabase.com/dashboard/project/hcrwrffvonawelmkuiwe/sql/new
 
 create extension if not exists "pgcrypto";
 
@@ -49,12 +49,22 @@ create table if not exists findings (
 create index if not exists findings_run_id_idx on findings (run_id);
 create index if not exists findings_severity_idx on findings (severity);
 
--- RLS: service role bypasses; enable for anon lockdown
 alter table scan_runs enable row level security;
 alter table audit_events enable row level security;
 alter table findings enable row level security;
 
--- Optional read policy for authenticated dashboard users
+-- Service role bypasses RLS. Publishable/anon read optional:
+drop policy if exists "read_runs_auth" on scan_runs;
+drop policy if exists "read_events_auth" on audit_events;
+drop policy if exists "read_findings_auth" on findings;
 create policy "read_runs_auth" on scan_runs for select to authenticated using (true);
 create policy "read_events_auth" on audit_events for select to authenticated using (true);
 create policy "read_findings_auth" on findings for select to authenticated using (true);
+
+-- Allow anon read for hackathon dashboard demos (optional; tighten later)
+drop policy if exists "read_runs_anon" on scan_runs;
+drop policy if exists "read_events_anon" on audit_events;
+drop policy if exists "read_findings_anon" on findings;
+create policy "read_runs_anon" on scan_runs for select to anon using (true);
+create policy "read_events_anon" on audit_events for select to anon using (true);
+create policy "read_findings_anon" on findings for select to anon using (true);

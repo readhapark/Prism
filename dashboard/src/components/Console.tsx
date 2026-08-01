@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   AgentEvent,
   Finding,
@@ -13,43 +13,74 @@ import {
   getScan,
   startSandbox,
   startScan,
-  stopSandbox,
 } from "@/lib/api";
 
-const KIND_STYLE: Record<string, string> = {
-  narrative: "text-teal",
-  thought: "text-mute",
-  decision: "text-sky",
-  action: "text-mist",
-  action_result: "text-mist",
-  finding: "text-amber",
-  guardrail: "text-rose",
-  human_gate: "text-amber",
-  run_started: "text-teal",
-  run_finished: "text-teal",
-  run_blocked: "text-rose",
-  error: "text-rose",
+/** Live narrative kinds — include step progress, not just summaries */
+const FEED_KINDS = new Set([
+  "narrative",
+  "thought",
+  "decision",
+  "action",
+  "action_result",
+  "finding",
+  "guardrail",
+  "human_gate",
+  "run_started",
+  "run_finished",
+  "run_blocked",
+  "error",
+]);
+
+const KIND_LABEL: Record<string, string> = {
+  narrative: "Note",
+  thought: "Thinking",
+  decision: "Next",
+  action: "Running",
+  action_result: "Result",
+  finding: "Finding",
+  guardrail: "Guardrail",
+  human_gate: "Approval",
+  run_started: "Start",
+  run_finished: "Done",
+  run_blocked: "Blocked",
+  error: "Error",
 };
 
+const TERMINAL = new Set(["completed", "blocked", "failed"]);
+
+function statusLabel(status: string) {
+  if (status === "idle") return "Ready";
+  if (status === "running" || status === "queued") return "Scanning";
+  if (status === "completed") return "Complete";
+  if (status === "awaiting_human") return "Needs approval";
+  if (status === "blocked") return "Blocked";
+  return status;
+}
+
 export default function Console() {
-  const [target, setTarget] = useState("http://127.0.0.1:3001");
-  const [mode, setMode] = useState<"passive" | "assisted">("passive");
+  const [target, setTarget] = useState("");
   const [health, setHealth] = useState<Health | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("idle");
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
-  const [steps, setSteps] = useState(0);
   const [reportMd, setReportMd] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [sandboxBusy, setSandboxBusy] = useState(false);
-  const [sandboxMsg, setSandboxMsg] = useState("");
+  const [showReport, setShowReport] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getHealth()
-      .then(setHealth)
+      .then((h) => {
+        setHealth(h);
+        // Prefer Modal sandbox URL from API config over localhost defaults.
+        if (h.sandbox_url && !/127\.0\.0\.1|localhost/i.test(h.sandbox_url)) {
+          setTarget((prev) => prev || h.sandbox_url);
+        }
+      })
       .catch(() =>
         setHealth({
           ok: false,
@@ -61,26 +92,72 @@ export default function Console() {
           sandbox_url: "",
         })
       );
+
+    // Ensure Modal sandbox is running and point the form at its tunnel.
+    setSandboxBusy(true);
     getSandbox()
-      .then((s) => {
+      .then(async (s) => {
         if (s.tunnel_url) {
           setTarget(s.tunnel_url);
-          setSandboxMsg(`Modal Sandbox live · ${s.sandbox_id?.slice(0, 12) || "ok"}`);
+          return;
         }
+        const started = await startSandbox(false);
+        if (started.tunnel_url) setTarget(started.tunnel_url);
+        else if (started.error) setError(started.error);
       })
-      .catch(() => undefined);
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Modal sandbox unavailable");
+      })
+      .finally(() => setSandboxBusy(false));
   }, []);
 
   useEffect(() => {
     if (!runId) return;
+    let cancelled = false;
+    let reportFetched = false;
+
+    const mergeEvents = (incoming: AgentEvent[]) => {
+      setEvents((prev) => {
+        if (!incoming.length) return prev;
+        const byId = new Map(prev.map((e) => [e.id, e]));
+        for (const e of incoming) byId.set(e.id, e);
+        return Array.from(byId.values()).sort((a, b) =>
+          String(a.timestamp).localeCompare(String(b.timestamp))
+        );
+      });
+    };
+
+    const syncFromScan = async () => {
+      try {
+        const r = await getScan(runId);
+        if (cancelled) return;
+        setStatus(r.status);
+        setFindings(r.findings || []);
+        mergeEvents(r.events || []);
+        if (TERMINAL.has(r.status) && !reportFetched) {
+          reportFetched = true;
+          getReport(runId)
+            .then((rep) => {
+              if (!cancelled) setReportMd(rep.markdown || "");
+            })
+            .catch(() => undefined);
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    };
+
+    // Polling is the reliable path through Cloudflare tunnels (SSE is often buffered).
+    void syncFromScan();
+    const poll = window.setInterval(() => {
+      void syncFromScan();
+    }, 1200);
+
     const es = new EventSource(eventsUrl(runId));
     const onAny = (ev: MessageEvent) => {
       try {
         const data = JSON.parse(ev.data) as AgentEvent;
-        setEvents((prev) => {
-          if (prev.some((p) => p.id === data.id)) return prev;
-          return [...prev, data];
-        });
+        mergeEvents([data]);
         if (data.kind === "finding" && data.detail) {
           const detail = data.detail;
           setFindings((prev) => {
@@ -101,56 +178,25 @@ export default function Console() {
             ];
           });
         }
-        if (data.kind === "action" || data.kind === "decision") {
-          setSteps((s) => s + (data.kind === "action" ? 1 : 0));
-        }
         if (data.kind === "run_finished" || data.kind === "run_blocked") {
           setStatus(data.kind === "run_blocked" ? "blocked" : "completed");
-          getScan(runId)
-            .then((r) => {
-              setFindings(r.findings || []);
-              setSteps(r.steps);
-              setStatus(r.status);
-            })
-            .catch(() => undefined);
-          getReport(runId)
-            .then((r) => setReportMd(r.markdown || ""))
-            .catch(() => undefined);
+          void syncFromScan();
         }
         if (data.kind === "human_gate" && data.message.toLowerCase().includes("awaiting")) {
           setStatus("awaiting_human");
         }
         if (data.kind === "run_started") setStatus("running");
       } catch {
-        /* ignore malformed */
+        /* ignore */
       }
     };
-    [
-      "narrative",
-      "thought",
-      "decision",
-      "action",
-      "action_result",
-      "finding",
-      "guardrail",
-      "human_gate",
-      "run_started",
-      "run_finished",
-      "run_blocked",
-      "error",
-    ].forEach((k) => es.addEventListener(k, onAny as EventListener));
-    es.onmessage = onAny;
-    es.onerror = () => {
-      /* browser will retry; also refresh state */
-      getScan(runId)
-        .then((r) => {
-          setStatus(r.status);
-          setFindings(r.findings || []);
-          setSteps(r.steps);
-        })
-        .catch(() => undefined);
+    FEED_KINDS.forEach((k) => es.addEventListener(k, onAny as EventListener));
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      es.close();
     };
-    return () => es.close();
   }, [runId]);
 
   useEffect(() => {
@@ -158,17 +204,11 @@ export default function Console() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [events]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {
-      critical: 0,
-      high: 0,
-      medium: 0,
-      low: 0,
-      info: 0,
-    };
-    for (const f of findings) c[f.severity] = (c[f.severity] || 0) + 1;
-    return c;
-  }, [findings]);
+  const feed = events.filter((e) => FEED_KINDS.has(e.kind));
+  const criticalCount = findings.filter(
+    (f) => f.severity === "critical" || f.severity === "high"
+  ).length;
+  const scanning = status === "running" || status === "queued";
 
   async function onStart(e: FormEvent) {
     e.preventDefault();
@@ -177,17 +217,16 @@ export default function Console() {
     setEvents([]);
     setFindings([]);
     setReportMd("");
-    setSteps(0);
+    setShowReport(false);
+    setExpandedId(null);
     setStatus("queued");
     try {
-      const run = await startScan(target.trim(), mode);
+      const run = await startScan(target.trim(), "passive");
       setRunId(run.id);
       setStatus(run.status);
-      if (run.status === "blocked") {
-        setError("Target blocked by allowlist guardrail.");
-      }
+      if (run.status === "blocked") setError("Target is outside the allowlist.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start scan");
+      setError(err instanceof Error ? err.message : "Could not start scan");
       setStatus("idle");
     } finally {
       setBusy(false);
@@ -196,252 +235,210 @@ export default function Console() {
 
   async function onHuman(approve: boolean) {
     if (!runId) return;
-    await decideHuman(runId, approve, approve ? "approved from dashboard" : "denied from dashboard");
+    await decideHuman(runId, approve, approve ? "approved" : "denied");
     setStatus("running");
   }
 
   async function onSandboxStart() {
     setSandboxBusy(true);
-    setSandboxMsg("Provisioning Modal Sandbox + encrypted tunnel…");
     try {
       const s = await startSandbox(false);
-      if (s.tunnel_url) {
-        setTarget(s.tunnel_url);
-        setSandboxMsg(`Sandbox ready · ${s.tunnel_url}`);
-      } else {
-        setSandboxMsg("Sandbox started but no tunnel URL returned");
-      }
+      if (s.tunnel_url) setTarget(s.tunnel_url);
     } catch (err) {
-      setSandboxMsg(err instanceof Error ? err.message : "Modal Sandbox failed — run modal setup");
-    } finally {
-      setSandboxBusy(false);
-    }
-  }
-
-  async function onSandboxStop() {
-    setSandboxBusy(true);
-    try {
-      await stopSandbox();
-      setSandboxMsg("Sandbox terminated");
-    } catch (err) {
-      setSandboxMsg(err instanceof Error ? err.message : "Stop failed");
+      setError(err instanceof Error ? err.message : "Sandbox failed");
     } finally {
       setSandboxBusy(false);
     }
   }
 
   return (
-    <main className="relative z-10 mx-auto flex min-h-screen max-w-[1400px] flex-col gap-6 px-4 py-6 md:px-8 md:py-8">
-      <header className="animate-rise flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.35em] text-teal/80">
-            scoped · read-only · audited
-          </p>
-          <h1 className="font-display text-5xl font-extrabold tracking-tight text-white md:text-7xl">
-            PRISM
-          </h1>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-mute md:text-base">
-            Agentic attack surface mapper + autonomous misconfig hunter. Recon chains into
-            Ossprey supply-chain checks; Overmind Lab traces every run for evals — humans stay in the loop.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-wider">
-          <Badge ok={!!health?.ok} label="API" />
-          <Badge ok={!!health?.ossprey} label="Ossprey" />
-          <Badge ok={!!health?.overmind} label="Overmind" />
-          <Badge ok={!!health?.supabase} label="Supabase" />
-          <Badge
-            ok={!!health?.llm}
-            label={
-              health?.llm_backend === "anthropic"
-                ? "Claude"
-                : health?.llm_backend === "openai"
-                  ? "OpenAI"
-                  : "LLM"
-            }
-          />
-        </div>
+    <main className="relative z-10 mx-auto min-h-screen max-w-5xl px-5 py-12 md:px-8 md:py-16">
+      <header className="animate-rise mb-12 max-w-xl">
+        <h1 className="font-display brand-sheen text-6xl font-extrabold tracking-tight md:text-7xl">
+          PRISM
+        </h1>
+        <p className="mt-5 text-lg leading-relaxed text-soft md:text-xl">
+          Map an allowlisted target. Surface misconfigurations — never exploit them.
+        </p>
+        <p className="mt-3 text-sm text-mute">
+          {health?.ok === false
+            ? "API offline — start the backend to engage."
+            : health?.ok
+              ? "Ready · read-only · audited"
+              : "Connecting…"}
+        </p>
       </header>
 
-      <section className="animate-rise scan-sheen rounded-sm border border-[var(--line)] bg-[var(--panel)] p-4 shadow-glow backdrop-blur md:p-5">
-        <form onSubmit={onStart} className="flex flex-col gap-3 md:flex-row md:items-end">
+      <section className="animate-rise mb-12">
+        <form onSubmit={onStart} className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <label className="flex-1">
-            <span className="mb-1 block text-[11px] uppercase tracking-[0.2em] text-mute">
-              Allowlisted target
-            </span>
+            <span className="mb-1.5 block text-sm font-medium text-soft">Target</span>
             <input
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              className="w-full border border-[var(--line)] bg-ink/60 px-3 py-3 font-mono text-sm text-mist outline-none ring-teal/40 focus:ring-2"
-              placeholder="http://127.0.0.1:3001 or https://….modal.run"
+              className="w-full border border-[var(--line)] bg-white/90 px-4 py-3.5 font-mono text-sm text-ink outline-none transition focus:border-accent focus:bg-white"
+              placeholder="https://your-lab.modal.host"
               required
             />
           </label>
-          <label>
-            <span className="mb-1 block text-[11px] uppercase tracking-[0.2em] text-mute">Mode</span>
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as "passive" | "assisted")}
-              className="border border-[var(--line)] bg-ink/60 px-3 py-3 font-mono text-sm text-mist outline-none"
-            >
-              <option value="passive">Passive (auto)</option>
-              <option value="assisted">Assisted (human gates)</option>
-            </select>
-          </label>
           <button
             type="submit"
-            disabled={busy}
-            className="border border-teal/50 bg-teal/15 px-5 py-3 font-display text-sm font-bold uppercase tracking-[0.18em] text-teal transition hover:bg-teal/25 disabled:opacity-50"
+            disabled={busy || scanning}
+            className="bg-accent px-7 py-3.5 font-display text-sm font-bold uppercase tracking-[0.16em] text-white transition hover:bg-accent-ink disabled:opacity-45"
           >
-            {busy ? "Starting…" : "Engage"}
+            {busy || scanning ? "Running…" : "Engage"}
           </button>
         </form>
-        {error && <p className="mt-3 text-sm text-rose">{error}</p>}
-        <div className="mt-3 flex flex-col gap-2 border-t border-[var(--line)] pt-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[11px] text-mute">
-            Allowlist: {(health?.allowlist || []).join(", ") || "loading…"}
-            {sandboxMsg ? ` · ${sandboxMsg}` : ""}
+        <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3 text-sm text-mute">
+          <p>
+            <span className="font-medium text-ink">{statusLabel(status)}</span>
+            {findings.length > 0 && (
+              <span>
+                {" "}
+                · {findings.length} finding{findings.length === 1 ? "" : "s"}
+                {criticalCount > 0 && (
+                  <span className="text-[var(--danger)]"> · {criticalCount} urgent</span>
+                )}
+              </span>
+            )}
           </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={sandboxBusy}
-              onClick={onSandboxStart}
-              className="border border-sky/40 bg-sky/10 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-sky disabled:opacity-50"
-            >
-              {sandboxBusy ? "Sandbox…" : "Spin Modal Sandbox"}
-            </button>
-            <button
-              type="button"
-              disabled={sandboxBusy}
-              onClick={onSandboxStop}
-              className="border border-[var(--line)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-mute disabled:opacity-50"
-            >
-              Stop
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={sandboxBusy}
+            onClick={onSandboxStart}
+            className="text-accent underline-offset-4 transition hover:underline disabled:opacity-50"
+          >
+            {sandboxBusy ? "Starting lab…" : "Use Modal lab"}
+          </button>
         </div>
+        {error && <p className="mt-3 text-sm text-[var(--danger)]">{error}</p>}
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <div className="flex min-h-[420px] flex-col rounded-sm border border-[var(--line)] bg-[var(--panel)] backdrop-blur">
-          <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="live-dot inline-block h-2 w-2 rounded-full bg-teal" />
-              <h2 className="font-display text-lg font-bold text-white">Live narrative</h2>
-            </div>
-            <div className="font-mono text-[11px] uppercase tracking-wider text-mute">
-              {status} · step {steps} · run {runId ? runId.slice(0, 8) : "—"}
-            </div>
+      <section className="grid gap-12 border-t border-[var(--line)] pt-10 lg:grid-cols-[1.4fr_1fr]">
+        <div className="animate-rise min-h-[360px]">
+          <div className="mb-5 flex items-center gap-2.5">
+            {scanning && <span className="live-dot inline-block h-2 w-2 rounded-full bg-accent" />}
+            <h2 className="font-display text-2xl font-bold tracking-tight text-ink">Narrative</h2>
           </div>
-          <div ref={feedRef} className="scroll-thin flex-1 space-y-2 overflow-y-auto p-4 font-mono text-[12.5px] leading-relaxed">
-            {events.length === 0 && (
-              <p className="text-mute">Waiting for engagement… point Prism at your Modal Juice Shop or local lab sandbox.</p>
+          <div ref={feedRef} className="scroll-thin max-h-[480px] space-y-5 overflow-y-auto pr-1">
+            {feed.length === 0 && (
+              <p className="text-[15px] leading-relaxed text-soft">
+                Engage a target to follow Prism’s reasoning in plain language.
+              </p>
             )}
-            {events.map((ev) => (
-              <div key={ev.id} className="animate-rise border-l border-[var(--line)] pl-3">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-[10px] uppercase tracking-wider text-mute">
-                    {new Date(ev.timestamp).toLocaleTimeString()}
-                  </span>
-                  <span className={`text-[10px] uppercase tracking-wider ${KIND_STYLE[ev.kind] || "text-mist"}`}>
-                    {ev.kind}
-                  </span>
+            {feed.map((ev, i) => (
+              <div
+                key={ev.id}
+                className="animate-rise border-l-2 border-accent/25 pl-4"
+                style={{ animationDelay: `${Math.min(i, 6) * 35}ms` }}
+              >
+                <div className="mb-1 flex items-baseline gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-mute">
+                  <span>{KIND_LABEL[ev.kind] || ev.kind}</span>
+                  <span aria-hidden>·</span>
+                  <span>{new Date(ev.timestamp).toLocaleTimeString()}</span>
                 </div>
-                <p className={KIND_STYLE[ev.kind] || "text-mist"}>{ev.message}</p>
+                <p className="text-[15px] leading-relaxed text-ink">{ev.message}</p>
               </div>
             ))}
           </div>
+
           {status === "awaiting_human" && (
-            <div className="flex items-center justify-between gap-3 border-t border-amber/30 bg-amber/10 px-4 py-3">
-              <p className="text-sm text-amber">Human gate — approve next non-passive check?</p>
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-y border-[var(--line)] py-4">
+              <p className="text-sm text-soft">Allow a deeper check beyond passive recon?</p>
               <div className="flex gap-2">
                 <button
                   onClick={() => onHuman(true)}
-                  className="border border-teal/40 px-3 py-1.5 text-xs uppercase tracking-wider text-teal"
+                  className="bg-accent px-4 py-2 text-xs font-bold uppercase tracking-wider text-white"
                 >
                   Approve
                 </button>
                 <button
                   onClick={() => onHuman(false)}
-                  className="border border-rose/40 px-3 py-1.5 text-xs uppercase tracking-wider text-rose"
+                  className="border border-[var(--line)] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-soft"
                 >
-                  Deny
+                  Skip
                 </button>
               </div>
             </div>
           )}
         </div>
 
-        <div className="flex min-h-[420px] flex-col gap-4">
-          <div className="rounded-sm border border-[var(--line)] bg-[var(--panel)] p-4 backdrop-blur">
-            <h2 className="font-display text-lg font-bold text-white">Severity radar</h2>
-            <div className="mt-3 grid grid-cols-5 gap-2 text-center font-mono text-xs">
-              {(["critical", "high", "medium", "low", "info"] as const).map((s) => (
-                <div key={s} className={`rounded-sm border px-1 py-2 severity-${s}`}>
-                  <div className="text-lg font-bold">{counts[s] || 0}</div>
-                  <div className="uppercase tracking-wider opacity-80">{s}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-1 flex-col rounded-sm border border-[var(--line)] bg-[var(--panel)] backdrop-blur">
-            <div className="border-b border-[var(--line)] px-4 py-3">
-              <h2 className="font-display text-lg font-bold text-white">
-                Findings ({findings.length})
-              </h2>
-            </div>
-            <div className="scroll-thin flex-1 space-y-3 overflow-y-auto p-4">
-              {findings.length === 0 && (
-                <p className="font-mono text-xs text-mute">No findings yet — the agent is still mapping.</p>
-              )}
-              {findings.map((f) => (
-                <article
-                  key={f.id}
-                  className={`animate-rise rounded-sm border px-3 py-2 severity-${f.severity}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="font-display text-sm font-bold text-white">{f.title}</h3>
-                    <span className="font-mono text-[10px] uppercase tracking-wider">{f.severity}</span>
-                  </div>
-                  <p className="mt-1 font-mono text-[11px] text-mist/90">{f.evidence}</p>
-                  <p className="mt-1 font-mono text-[11px] text-mute">Fix: {f.remediation}</p>
+        <aside className="animate-rise">
+          <h2 className="mb-5 font-display text-2xl font-bold tracking-tight text-ink">
+            Findings
+            {findings.length > 0 && (
+              <span className="ml-2 align-middle font-ui text-base font-medium text-mute">
+                {findings.length}
+              </span>
+            )}
+          </h2>
+          <div className="scroll-thin max-h-[480px] space-y-1 overflow-y-auto pr-1">
+            {findings.length === 0 && (
+              <p className="text-[15px] leading-relaxed text-soft">
+                Confirmed issues will land here, ranked by severity.
+              </p>
+            )}
+            {findings.map((f) => {
+              const open = expandedId === f.id;
+              return (
+                <article key={f.id} className="animate-rise border-b border-[var(--line)] py-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(open ? null : f.id)}
+                    className="flex w-full items-start gap-2.5 text-left"
+                  >
+                    <span
+                      className={`mt-0.5 shrink-0 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider sev-${f.severity}`}
+                    >
+                      {f.severity}
+                    </span>
+                    <span className="font-display text-[15px] font-bold leading-snug text-ink">
+                      {f.title}
+                    </span>
+                  </button>
+                  {open && (
+                    <div className="mt-2 space-y-1.5 pl-[4.25rem]">
+                      {f.evidence && (
+                        <p className="text-sm leading-relaxed text-soft">{f.evidence}</p>
+                      )}
+                      {f.remediation && (
+                        <p className="text-sm leading-relaxed text-mute">
+                          <span className="font-medium text-ink">Fix — </span>
+                          {f.remediation}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </article>
-              ))}
-            </div>
+              );
+            })}
           </div>
-        </div>
+        </aside>
       </section>
 
-      <section className="animate-rise rounded-sm border border-[var(--line)] bg-[var(--panel)] p-4 backdrop-blur md:p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-display text-lg font-bold text-white">Findings report</h2>
-          <span className="font-mono text-[11px] uppercase tracking-wider text-mute">
-            demo payoff · markdown
-          </span>
-        </div>
-        <pre className="scroll-thin max-h-80 overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-mist/90">
-          {reportMd || "Report appears when the autonomous pass finishes."}
-        </pre>
-      </section>
+      {reportMd && (
+        <section className="animate-rise mt-14 border-t border-[var(--line)] pt-8">
+          <button
+            type="button"
+            onClick={() => setShowReport((v) => !v)}
+            className="flex items-baseline gap-3 font-display text-xl font-bold text-ink"
+          >
+            Full report
+            <span className="font-ui text-sm font-medium text-mute">
+              {showReport ? "Hide" : "Show"}
+            </span>
+          </button>
+          {showReport && (
+            <pre className="scroll-thin mt-4 max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-soft">
+              {reportMd}
+            </pre>
+          )}
+        </section>
+      )}
 
-      <footer className="pb-6 text-center font-mono text-[11px] text-mute">
-        Guardrails: hardcoded allowlist · read-only checks · no auto-exploit · audit log every action ·
-        Ossprey + Overmind enrichment
+      <footer className="mt-20 pb-6 text-center text-xs tracking-wide text-mute">
+        Allowlisted targets · findings only · audit trail preserved
       </footer>
     </main>
-  );
-}
-
-function Badge({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span
-      className={`border px-2 py-1 ${
-        ok ? "border-teal/40 bg-teal/10 text-teal" : "border-[var(--line)] text-mute"
-      }`}
-    >
-      {label} {ok ? "●" : "○"}
-    </span>
   );
 }

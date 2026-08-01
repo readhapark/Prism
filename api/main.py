@@ -153,7 +153,17 @@ async def stream_events(run_id: str):
         pass
 
     async def gen():
-        async for event in bus.subscribe(run_id):
+        # Padding + heartbeats help reverse proxies flush SSE chunks.
+        yield ": " + (" " * 2048) + "\n\n"
+        stream = bus.subscribe(run_id).__aiter__()
+        while True:
+            try:
+                event = await asyncio.wait_for(stream.__anext__(), timeout=1.5)
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
             payload = event.model_dump(mode="json")
             yield f"event: {event.kind.value}\ndata: {json.dumps(payload)}\n\n"
             if event.kind.value in {"run_finished", "run_blocked"}:
@@ -163,9 +173,10 @@ async def stream_events(run_id: str):
         gen(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "Content-Encoding": "identity",
         },
     )
 

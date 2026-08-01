@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Syne } from "next/font/google";
+import { Figtree, IBM_Plex_Mono, Syne } from "next/font/google";
 import "./globals.css";
 
 const display = Syne({
@@ -8,21 +8,27 @@ const display = Syne({
   weight: ["600", "700", "800"],
 });
 
-const body = IBM_Plex_Mono({
+const ui = Figtree({
   subsets: ["latin"],
-  variable: "--font-body",
-  weight: ["400", "500", "600"],
+  variable: "--font-ui",
+  weight: ["400", "500", "600", "700"],
+});
+
+const mono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
-  title: "PRISM — Agentic Attack Surface Mapper",
+  title: "PRISM — Attack Surface Mapper",
   description:
-    "Autonomous recon → misconfig hunter with allowlist guardrails, Ossprey supply-chain checks, and Overmind blast-radius context.",
+    "Autonomous recon and misconfig hunting with allowlist guardrails, Ossprey, and Overmind Lab.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${body.variable}`}>
+    <html lang="en" className={`${display.variable} ${ui.variable} ${mono.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );

@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     agent_host: str = "0.0.0.0"
     agent_port: int = 8787
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    sandbox_url: str = "http://127.0.0.1:3001"
+    sandbox_url: str = ""
     max_agent_steps: int = 18
     request_timeout_s: float = 12.0
     # Hard safety: never send exploit payloads / write actions

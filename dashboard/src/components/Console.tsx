@@ -15,10 +15,13 @@ import {
   startScan,
 } from "@/lib/api";
 
-/** High-signal events only — keep the feed readable */
+/** Live narrative kinds — include step progress, not just summaries */
 const FEED_KINDS = new Set([
   "narrative",
+  "thought",
   "decision",
+  "action",
+  "action_result",
   "finding",
   "guardrail",
   "human_gate",
@@ -30,7 +33,10 @@ const FEED_KINDS = new Set([
 
 const KIND_LABEL: Record<string, string> = {
   narrative: "Note",
+  thought: "Thinking",
   decision: "Next",
+  action: "Running",
+  action_result: "Result",
   finding: "Finding",
   guardrail: "Guardrail",
   human_gate: "Approval",
@@ -39,6 +45,8 @@ const KIND_LABEL: Record<string, string> = {
   run_blocked: "Blocked",
   error: "Error",
 };
+
+const TERMINAL = new Set(["completed", "blocked", "failed"]);
 
 function statusLabel(status: string) {
   if (status === "idle") return "Ready";
@@ -87,14 +95,51 @@ export default function Console() {
 
   useEffect(() => {
     if (!runId) return;
+    let cancelled = false;
+    let reportFetched = false;
+
+    const mergeEvents = (incoming: AgentEvent[]) => {
+      setEvents((prev) => {
+        if (!incoming.length) return prev;
+        const byId = new Map(prev.map((e) => [e.id, e]));
+        for (const e of incoming) byId.set(e.id, e);
+        return Array.from(byId.values()).sort((a, b) =>
+          String(a.timestamp).localeCompare(String(b.timestamp))
+        );
+      });
+    };
+
+    const syncFromScan = async () => {
+      try {
+        const r = await getScan(runId);
+        if (cancelled) return;
+        setStatus(r.status);
+        setFindings(r.findings || []);
+        mergeEvents(r.events || []);
+        if (TERMINAL.has(r.status) && !reportFetched) {
+          reportFetched = true;
+          getReport(runId)
+            .then((rep) => {
+              if (!cancelled) setReportMd(rep.markdown || "");
+            })
+            .catch(() => undefined);
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    };
+
+    // Polling is the reliable path through Cloudflare tunnels (SSE is often buffered).
+    void syncFromScan();
+    const poll = window.setInterval(() => {
+      void syncFromScan();
+    }, 1200);
+
     const es = new EventSource(eventsUrl(runId));
     const onAny = (ev: MessageEvent) => {
       try {
         const data = JSON.parse(ev.data) as AgentEvent;
-        setEvents((prev) => {
-          if (prev.some((p) => p.id === data.id)) return prev;
-          return [...prev, data];
-        });
+        mergeEvents([data]);
         if (data.kind === "finding" && data.detail) {
           const detail = data.detail;
           setFindings((prev) => {
@@ -117,17 +162,7 @@ export default function Console() {
         }
         if (data.kind === "run_finished" || data.kind === "run_blocked") {
           setStatus(data.kind === "run_blocked" ? "blocked" : "completed");
-          getScan(runId)
-            .then((r) => {
-              setFindings(r.findings || []);
-              setStatus(r.status);
-            })
-            .catch(() => undefined);
-          getReport(runId)
-            .then((r) => {
-              setReportMd(r.markdown || "");
-            })
-            .catch(() => undefined);
+          void syncFromScan();
         }
         if (data.kind === "human_gate" && data.message.toLowerCase().includes("awaiting")) {
           setStatus("awaiting_human");
@@ -138,16 +173,12 @@ export default function Console() {
       }
     };
     FEED_KINDS.forEach((k) => es.addEventListener(k, onAny as EventListener));
-    es.addEventListener("finding", onAny as EventListener);
-    es.onerror = () => {
-      getScan(runId)
-        .then((r) => {
-          setStatus(r.status);
-          setFindings(r.findings || []);
-        })
-        .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      es.close();
     };
-    return () => es.close();
   }, [runId]);
 
   useEffect(() => {

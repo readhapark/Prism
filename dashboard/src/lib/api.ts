@@ -1,5 +1,7 @@
+// Prefer same-origin Next rewrite (/prism-api → local API) so public
+// Cloudflare dashboard tunnels don't depend on a second API tunnel for SSE.
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://127.0.0.1:8787";
+  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "/prism-api";
 
 export type RunSummary = {
   id: string;

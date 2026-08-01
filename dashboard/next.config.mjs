@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Public Cloudflare quick tunnels hit the dev server cross-origin.
+  allowedDevOrigins: [
+    "*.trycloudflare.com",
+    "liked-international-fires-read.trycloudflare.com",
+  ],
   async rewrites() {
     // Proxy to the local Prism API so the browser can use same-origin
     // requests (avoids cross-tunnel CORS + improves EventSource reliability).
